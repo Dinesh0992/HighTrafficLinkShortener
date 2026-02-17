@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scale-app", "scale-app", "{31F9DCA0-E8CE-8AF3-E169-1FDA121E1E37}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkApp.Server", "scale-app\LinkApp.Server\LinkApp.Server.csproj", "{C3DA049A-BCED-78BE-EAC4-B211DC5F974D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C3DA049A-BCED-78BE-EAC4-B211DC5F974D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C3DA049A-BCED-78BE-EAC4-B211DC5F974D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C3DA049A-BCED-78BE-EAC4-B211DC5F974D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C3DA049A-BCED-78BE-EAC4-B211DC5F974D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C3DA049A-BCED-78BE-EAC4-B211DC5F974D} = {31F9DCA0-E8CE-8AF3-E169-1FDA121E1E37}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {35CFCF45-6DAB-4714-A5AD-7934E3EBD7CA}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,6 @@
+@LinkApp.Server_HostAddress = http://localhost:5082
+
+GET {{LinkApp.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
