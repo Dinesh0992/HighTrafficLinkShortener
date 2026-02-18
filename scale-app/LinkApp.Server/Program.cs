@@ -1,143 +1,99 @@
-/*phase one - the basics with no DI or pooling */
-/*using Npgsql;
-var builder = WebApplication.CreateBuilder(args);
-
-// Enable CORS so Vite can talk to us
-builder.Services.AddCors(options => {
-    options.AddPolicy("VitePolicy", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
-});
-
-var app = builder.Build();
-app.UseCors("VitePolicy");
-
-string connString = "Host=localhost;Username=postgres;Password=password123;Database=shortener_db";
-
-// Endpoint to find a link
-app.MapGet("/{code}", async (string code) => {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-    using var cmd = new NpgsqlCommand("SELECT long_url FROM urls WHERE short_code = @c", conn);
-    cmd.Parameters.AddWithValue("c", code);
-    var result = await cmd.ExecuteScalarAsync();
-    return result is string url ? Results.Redirect(url) : Results.NotFound();
-});
-
-// Endpoint to seed data (The heavy lifter)
-app.MapPost("/seed", async () => {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-    using var writer = await conn.BeginBinaryImportAsync("COPY urls (long_url, short_code) FROM STDIN (FORMAT BINARY)");
-    for (int i = 1; i <= 100000; i++) {
-        await writer.StartRowAsync();
-        await writer.WriteAsync($"https://google.com/search?q={i}", NpgsqlTypes.NpgsqlDbType.Text);
-        await writer.WriteAsync($"code{i}", NpgsqlTypes.NpgsqlDbType.Varchar);
-    }
-    await writer.CompleteAsync();
-    return "100,000 links created!";
-});
-
-app.Run();
-*/
-/* phase two with DI and connection pooling */
-/*
-using Npgsql;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// 1. Setup Connection String (Ensure this matches your Docker setup)
-var connectionString = "Host=localhost;Username=postgres;Password=password123;Database=shortener_db;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=100;";
-
-// 2. Register NpgsqlDataSource as a Singleton (The Pool Manager)
-builder.Services.AddNpgsqlDataSource(connectionString);
-
-// 3. Configure CORS (Allows your Vite frontend to talk to this API)
-builder.Services.AddCors(options => {
-    options.AddPolicy("VitePolicy", policy => 
-        policy.WithOrigins("http://localhost:5173") // The default Vite port
-              .AllowAnyMethod()
-              .AllowAnyHeader());
-});
-
-var app = builder.Build();
-
-// 4. Use Middleware
-app.UseCors("VitePolicy");
-
-// --- ENDPOINTS ---
-
-// Root check
-app.MapGet("/", () => "API is running. Ready to scale!");
-
-// ⚡ The Redirect Endpoint (The one you'll stress test)
-app.MapGet("/{code}", async (string code, NpgsqlDataSource dataSource) =>
-{
-    await using var cmd = dataSource.CreateCommand("SELECT long_url FROM urls WHERE short_code = @c");
-    cmd.Parameters.AddWithValue("c", code);
-    
-    var result = await cmd.ExecuteScalarAsync();
-    
-    // 302 Redirect to the original URL
-    return result is string url ? Results.Redirect(url) : Results.NotFound();
-});
-
-// 🚀 The Seeder Endpoint (To pump 100k rows for testing)
-app.MapPost("/seed", async (NpgsqlDataSource dataSource) =>
-{
-    await using var connection = await dataSource.OpenConnectionAsync();
-    await using var writer = await connection.BeginBinaryImportAsync(
-        "COPY urls (long_url, short_code) FROM STDIN (FORMAT BINARY)");
-
-    for (int i = 1; i <= 100000; i++)
-    {
-        await writer.StartRowAsync();
-        await writer.WriteAsync($"https://google.com/search?q={i}", NpgsqlTypes.NpgsqlDbType.Text);
-        await writer.WriteAsync($"code{i}", NpgsqlTypes.NpgsqlDbType.Varchar);
-    }
-
-    await writer.CompleteAsync();
-    return Results.Ok("100,000 rows successfully seeded!");
-});
-
-app.Run();
-*/
-/* phase three with Redis caching */
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Distributed;
 using Npgsql;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Register DB
-builder.Services.AddNpgsqlDataSource("Host=localhost;Username=postgres;Password=password123;Database=shortener_db;Pooling=true;");
+// --- CONFIGURATION ---
+var connectionString = builder.Configuration.GetConnectionString("Postgres");
+var redisConnection = builder.Configuration.GetConnectionString("Redis");
 
-// Register Redis
-builder.Services.AddStackExchangeRedisCache(options => {
-    options.Configuration = "localhost:6379";
+// --- PHASE 2: DATABASE & POOLING (Singleton DataSource) ---
+builder.Services.AddNpgsqlDataSource(connectionString!);
+
+// --- PHASE 3: DISTRIBUTED CACHING (Redis) ---
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnection;
+    options.InstanceName = "Shortener_";
+});
+
+// --- PHASE 4: RATE LIMITING (Partitioned by IP) ---
+builder.Services.AddRateLimiter(options =>
+{
+    // 1. Set the status code for all rejections
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // 2. Define WHAT happens when a user is rejected
+    options.OnRejected = async (context, token) =>
+    {
+        // Add the Retry-After header (tells the client how many seconds to wait)
+        context.HttpContext.Response.Headers["Retry-After"] = "10";
+
+        // Write a custom message to the response body
+        await context.HttpContext.Response.WriteAsync(
+            "Quota exceeded. Try again in 10 seconds.", 
+            cancellationToken: token);
+    };
+
+    // 3. fixed-ip existing policy
+    /*
+    options.AddPolicy("fixed-by-ip", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromSeconds(10),
+                QueueLimit = 0
+            }));
+    */
+    /*liding-by-ip*/
+    options.AddPolicy("sliding-by-ip", httpContext =>
+        RateLimitPartition.GetSlidingWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            factory: _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromSeconds(10),
+                SegmentsPerWindow = 5, // 10s / 5 segments = 2s per segment
+                QueueLimit = 0
+            }));
 });
 
 var app = builder.Build();
 
-app.MapGet("/{code}", async (string code, NpgsqlDataSource dataSource, IDistributedCache cache) => {
-    // 1. Try to get the URL from the Redis RAM
+// Middleware Order is critical!
+app.UseRateLimiter();
+
+// --- THE HIGH-PERFORMANCE REDIRECT ENDPOINT ---
+app.MapGet("/{code}", async (string code, NpgsqlDataSource dataSource, IDistributedCache cache) =>
+{
+    // 1. Check Redis Cache (RAM - Fast Path)
     var cachedUrl = await cache.GetStringAsync(code);
-    
-    if (!string.IsNullOrEmpty(cachedUrl)) {
+    if (!string.IsNullOrEmpty(cachedUrl))
+    {
         return Results.Redirect(cachedUrl);
     }
 
-    // 2. If not in RAM, go to the slow Database
+    // 2. Check Postgres (Disk - Slow Path)
     await using var cmd = dataSource.CreateCommand("SELECT long_url FROM urls WHERE short_code = @c");
     cmd.Parameters.AddWithValue("c", code);
-    var result = await cmd.ExecuteScalarAsync();
+    var url = await cmd.ExecuteScalarAsync();
 
-    if (result is string url) {
-        // 3. Save it to RAM so the NEXT 1 million users don't hit the DB
-        await cache.SetStringAsync(code, url, new DistributedCacheEntryOptions {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+    if (url is string longUrl)
+    {
+        // 3. Update Cache for future requests
+        await cache.SetStringAsync(code, longUrl, new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
         });
-        return Results.Redirect(url);
+
+        return Results.Redirect(longUrl);
     }
-    
+
     return Results.NotFound();
-});
+}).RequireRateLimiting("sliding-by-ip");
 
 app.Run();
