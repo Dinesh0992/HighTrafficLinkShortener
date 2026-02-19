@@ -44,6 +44,23 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 
 ## 🛡️ Key Features
 
+### 1. Raw Connections (Phase 1)
+The baseline approach - direct PostgreSQL connections without optimization.
+* **Problem:** Connection exhaustion bottleneck when handling >6,000 RPS.
+* **Throughput:** ~6,000 RPS (limited by TCP connection pool).
+* **Lesson:** Connection management is critical at scale.
+
+### 2. Database Excellence (Phase 2)
+Built on **PostgreSQL** with a focus on connection efficiency and lookup speed.
+* **B-Tree Indexing:** Optimized `short_code` lookups for O(log n) search time.
+* **NpgsqlDataSource Pooling:** Implements high-performance singleton connection pooling to eliminate the overhead of repeatedly opening and closing database connections.
+
+### 3. Distributed Caching (Phase 3)
+Utilizes **Redis** as a high-speed "Fast Path" for redirects to bypass database latency.
+* **Cache-Aside Pattern:** The system checks Redis first. On a cache miss, it queries PostgreSQL and hydrates Redis for subsequent requests.
+* **Efficiency:** Drastically reduces database I/O, allowing the system to scale to tens of thousands of redirects per second.
+* **TTL Management:** 1-hour expiration to balance freshness and performance.
+
 ### 4. Partitioned Rate Limiting (Phase 4)
 Implemented a **Partitioned Sliding Window** algorithm to protect the system from DDoS attacks and API abuse.
 * **Per-IP Isolation:** Uses the client's Remote IP as a partition key to ensure one user's spam does not affect another user's access.
@@ -145,19 +162,6 @@ Channel Reader → PostgreSQL Insert
 
 ---
 
-### 2. Distributed Caching (Phase 3)
-Utilizes **Redis** as a high-speed "Fast Path" for redirects to bypass database latency.
-* **Cache-Aside Pattern:** The system checks Redis first. On a cache miss, it queries PostgreSQL and hydrates Redis for subsequent requests.
-* **Efficiency:** Drastically reduces database I/O, allowing the system to scale to tens of thousands of redirects per second.
-* **TTL Management:** 1-hour expiration to balance freshness and performance.
-
-### 3. Database Excellence (Phase 2)
-Built on **PostgreSQL** with a focus on connection efficiency and lookup speed.
-* **B-Tree Indexing:** Optimized `short_code` lookups for O(log n) search time.
-* **NpgsqlDataSource Pooling:** Implements high-performance singleton connection pooling to eliminate the overhead of repeatedly opening and closing database connections.
-
----
-
 ## 🛠️ Tech Stack
 * **Runtime:** .NET 10 (Minimal APIs)
 * **Database:** PostgreSQL 16
@@ -240,7 +244,9 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 | **Phase 1** | Raw Connections | ~6,000 RPS | Connection Management Bottleneck |
 | **Phase 2** | Connection Pooling | ~1,800 RPS | Database Optimization |
 | **Phase 3** | Redis Caching | **15,000+ RPS** | Cache-Aside Pattern |
-| **Phase 4** | Rate Limiting | **25,000+ RPS** | DDoS Protection & Stability || **Phase 5** | Background Analytics | **23,000+ RPS** | Fire-and-Forget Analytics Pipeline |
+| **Phase 4** | Rate Limiting | **25,000+ RPS** | DDoS Protection & Stability |
+| **Phase 5** | Background Analytics | **23,000+ RPS** | Fire-and-Forget Analytics Pipeline |
+
 ---
 
 ## 🔧 API Endpoints
