@@ -1,6 +1,6 @@
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Distributed;
 using Npgsql;
+using System.Threading.Channels;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -62,33 +62,54 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+builder.Services.AddSingleton(Channel.CreateUnbounded<ClickData>());
+builder.Services.AddHostedService<AnalyticsBackgroundWorker>();
+
 var app = builder.Build();
 
 // Middleware Order is critical!
 app.UseRateLimiter();
 
 // --- THE HIGH-PERFORMANCE REDIRECT ENDPOINT ---
-app.MapGet("/{code}", async (string code, NpgsqlDataSource dataSource, IDistributedCache cache) =>
+app.MapGet("/{code}", async (
+    string code, 
+    NpgsqlDataSource dataSource, 
+    IDistributedCache cache, 
+    Channel<ClickData> channel, 
+    HttpContext context) =>
 {
-    // 1. Check Redis Cache (RAM - Fast Path)
+    // 1. Check Redis Cache (Fast Path)
     var cachedUrl = await cache.GetStringAsync(code);
+    
     if (!string.IsNullOrEmpty(cachedUrl))
     {
+        // PUSH TO ANALYTICS (Background)
+        channel.Writer.TryWrite(new ClickData(
+            code, 
+            context.Connection.RemoteIpAddress?.ToString(), 
+            context.Request.Headers.UserAgent));
+
         return Results.Redirect(cachedUrl);
     }
 
-    // 2. Check Postgres (Disk - Slow Path)
+    // 2. Check Postgres (Slow Path)
     await using var cmd = dataSource.CreateCommand("SELECT long_url FROM urls WHERE short_code = @c");
     cmd.Parameters.AddWithValue("c", code);
-    var url = await cmd.ExecuteScalarAsync();
+    var dbResult = await cmd.ExecuteScalarAsync();
 
-    if (url is string longUrl)
+    if (dbResult is string longUrl)
     {
-        // 3. Update Cache for future requests
+        // Hydrate Cache
         await cache.SetStringAsync(code, longUrl, new DistributedCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
         });
+
+        // PUSH TO ANALYTICS (Background)
+        channel.Writer.TryWrite(new ClickData(
+            code, 
+            context.Connection.RemoteIpAddress?.ToString(), 
+            context.Request.Headers.UserAgent));
 
         return Results.Redirect(longUrl);
     }

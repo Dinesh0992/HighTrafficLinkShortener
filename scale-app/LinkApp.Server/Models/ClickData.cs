@@ -1,0 +1,1 @@
+public record ClickData(string ShortCode, string? IpAddress, string? UserAgent);
