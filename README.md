@@ -438,12 +438,46 @@ curl -X POST http://localhost:5082/seed
 
 ---
 
-## 📈 Future Roadmap
+## 📈 Future Roadmap: Scaling to Billions
+
+### Current Completion Status
 - [x] Phase 5: Background Analytics – Tracking clicks via System.Threading.Channels ✅ **COMPLETED**
 - [x] Phase 5.1: Batch Insert Optimization – 100-click batching with error handling ✅ **COMPLETED**
-- [ ] Phase 6: Custom Aliases – User-defined short codes with collision detection
-- [ ] Phase 7: Real-time Dashboard – OpenTelemetry + Grafana visualization
-- [ ] Phase 8: Global Distribution – Multi-region replication with eventual consistency
+
+### Next Phases: Enterprise-Scale Analytics
+
+#### Phase 6: Analytics Dashboard
+- [ ] **Real-time visualization** of link performance and click metrics.
+- [ ] Track top clicked links, geographic distribution, and temporal patterns.
+- [ ] REST API endpoints to query analytics without exposing raw database.
+
+#### Phase 7: ClickHouse Integration (Critical for Billions)
+- [ ] **Problem:** PostgreSQL is optimized for transactional workloads (OLTP), not analytics (OLAP).
+      - At 23,000 RPS with batch inserts, PostgreSQL excels at writing data, but querying billions of rows gets slow.
+- [ ] **Solution:** Implement the "Postgres + ClickHouse" stack:
+      - **PostgreSQL (OLTP):** Reliable transactional writes, short-term storage (1-7 days).
+      - **ClickHouse (OLAP):** Specialized column-store database for sub-second analytics queries over billions of rows.
+      - **Data Pipeline:** Real-time replication from Postgres to ClickHouse using Kafka or Change Data Capture (CDC).
+- [ ] **Expected Benefit:** Query 1 billion click records in <1 second, enabling real-time dashboards.
+
+#### Phase 8: Geo-IP Mapping
+- [ ] **Enrich analytics** by mapping click IP addresses to countries/cities in the background pipeline.
+- [ ] Use MaxMind GeoIP2 database or similar for fast IP geolocation lookups.
+- [ ] Store geographic data alongside click records for multi-dimensional analytics.
+- [ ] Example queries: "Show me clicks by country in the last hour" (instant response on ClickHouse).
+
+---
+
+## 🏗️ Long-Term Vision
+
+| Phase | Goal | Impact |
+| :--- | :--- | :--- |
+| **Phases 1-4** | Foundation & Performance | 25,000 RPS sustainable |
+| **Phase 5-5.1** | Analytics at Scale | 23,000 RPS with full observability |
+| **Phase 6** | Observability | Real-time dashboards for insights |
+| **Phase 7** | Analytics Power | Sub-second queries over billions of rows |
+| **Phase 8** | Enrichment | Geo-contextual analytics capabilities |
+| **Future** | Global Scale | Multi-region deployment, disaster recovery |
 
 ---
 
