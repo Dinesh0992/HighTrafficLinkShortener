@@ -100,6 +100,22 @@ Decoupled analytics from the critical redirect path using **Producer-Consumer Pa
 * **Comprehensive Logging:** Added startup, shutdown, and error messages for observability and debugging.
 * **Performance Trade-off:** Maintains 97% of Phase 5 throughput (23,147 RPS vs 23,752 RPS) while achieving massive database optimization (238 batch ops/sec vs 23,752 individual writes/sec).
 
+### 6. Analytics Dashboard & Stats API (Phase 6 - COMPLETED)
+Real-time analytics dashboard with modern UI and RESTful API for link performance metrics.
+
+* **Stats Endpoint:** `/api/stats/{code}` returns:
+  - Total clicks count
+  - Unique visitors (distinct IP addresses)
+  - Last accessed timestamp
+  - 7-day click history (daily aggregation)
+* **Redis Caching:** Stats cached for 30 seconds to reduce database load
+* **Efficient Batch Queries:** Uses `NpgsqlBatch` to execute stats + history queries in single round-trip
+* **Trending Links:** `/api/stats/trending` returns top clicked links
+* **Client Dashboard:** Modern Tailwind CSS UI with:
+  - Trending links display
+  - Search functionality for individual link stats
+  - Visual cards showing clicks, uniques, and last accessed
+
 **Data Captured:**
 ```sql
 CREATE TABLE link_analytics (
@@ -111,6 +127,9 @@ CREATE TABLE link_analytics (
 );
 
 CREATE INDEX idx_analytics_code ON link_analytics(short_code);
+
+-- Composite index for optimized analytics queries
+CREATE INDEX idx_analytics_code_date ON link_analytics (short_code, clicked_at DESC);
 ```
 
 ---
@@ -315,6 +334,7 @@ Console.WriteLine("[Analytics] Batch worker stopped.");
 * **Caching:** Redis (StackExchange.Redis)
 * **Security:** Microsoft.AspNetCore.RateLimiting
 * **Stress Testing:** Autocannon
+* **Frontend:** Vite + TypeScript + Tailwind CSS
 * **Deployment:** Docker & Docker Compose
 
 ---
@@ -324,7 +344,7 @@ Console.WriteLine("[Analytics] Batch worker stopped.");
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/Dinesh0992/HighTrafficLinkShortener.git
-cd HighTrafficLinkShortener/scale-app/LinkApp.Server
+cd HighTrafficLinkShortener
 ```
 
 ### 2. Start Infrastructure Services
@@ -349,9 +369,17 @@ CREATE TABLE urls (
 
 CREATE INDEX idx_short_code ON urls(short_code);
 
-INSERT INTO urls (short_code, long_url)
-SELECT 'code' || i, 'https://www.google.com/search?q=' || i
-FROM generate_series(1, 100000) s(i);
+-- Analytics table for tracking clicks
+CREATE TABLE link_analytics (
+    id SERIAL PRIMARY KEY,
+    short_code VARCHAR(10) NOT NULL,
+    clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT
+);
+
+CREATE INDEX idx_analytics_code ON link_analytics(short_code);
+CREATE INDEX idx_analytics_code_date ON link_analytics (short_code, clicked_at DESC);
 ```
 
 ### 4. Configure Connection Strings
@@ -371,10 +399,18 @@ dotnet run
 ```
 The server will start on `http://localhost:5082`
 
-### 6. Test with Autocannon
-Seed the database:
+### 6. Run the Dashboard (Optional)
 ```bash
-curl -X POST http://localhost:5082/seed
+cd scale-app/LinkApp.Client
+npm install
+npm run dev
+```
+The dashboard will start on `http://localhost:5173`
+
+### 7. Test with Autocannon
+Seed the database (creates 10 million records using Binary COPY):
+```bash
+curl -X POST http://localhost:5082/api/seed
 ```
 
 Run the stress test with status code visualization:
@@ -394,6 +430,7 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 | **Phase 4** | Rate Limiting | **25,000+ RPS** | DDoS Protection & Stability |
 | **Phase 5** | Background Analytics | **23,752 RPS** | Fire-and-Forget Analytics Pipeline |
 | **Phase 5.1** | Batch Insert (100 clicks) | **23,147 RPS** | 99% DB Round-trip Reduction |
+| **Phase 6** | Analytics Dashboard | **23,000+ RPS** | Real-time Stats API + UI |
 
 ---
 
@@ -415,15 +452,51 @@ Redirects to the original URL if found in cache or database.
 curl -L http://localhost:5082/code1
 ```
 
-### Seed Endpoint
+### Seed Endpoint (Binary COPY)
 ```
-POST /seed
+POST /api/seed
 ```
-Inserts 100,000 test records into the database.
+Inserts 10 million test records into the database using PostgreSQL **Binary COPY** for maximum bulk insert performance.
 
 **Example:**
 ```bash
-curl -X POST http://localhost:5082/seed
+curl -X POST http://localhost:5082/api/seed
+```
+
+### Stats Endpoint
+```
+GET /api/stats/{code}
+```
+Returns analytics for a specific short code.
+
+**Response:**
+```json
+{
+  "shortCode": "code1",
+  "totalClicks": 1523,
+  "uniqueVisitors": 892,
+  "lastAccessed": "2026-02-20T10:30:00Z",
+  "clickHistory": [
+    { "date": "2026-02-20", "count": 45 },
+    { "date": "2026-02-19", "count": 123 }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:5082/api/stats/code1
+```
+
+### Trending Links Endpoint
+```
+GET /api/stats/trending
+```
+Returns top 10 most clicked links.
+
+**Example:**
+```bash
+curl http://localhost:5082/api/stats/trending
 ```
 
 ---
@@ -443,6 +516,7 @@ curl -X POST http://localhost:5082/seed
 ### Current Completion Status
 - [x] Phase 5: Background Analytics – Tracking clicks via System.Threading.Channels ✅ **COMPLETED**
 - [x] Phase 5.1: Batch Insert Optimization – 100-click batching with error handling ✅ **COMPLETED**
+- [x] Phase 6: Analytics Dashboard – Real-time stats API, caching, and modern UI ✅ **COMPLETED**
 
 ### Next Phases: Enterprise-Scale Analytics
 
@@ -474,7 +548,7 @@ curl -X POST http://localhost:5082/seed
 | :--- | :--- | :--- |
 | **Phases 1-4** | Foundation & Performance | 25,000 RPS sustainable |
 | **Phase 5-5.1** | Analytics at Scale | 23,000 RPS with full observability |
-| **Phase 6** | Observability | Real-time dashboards for insights |
+| **Phase 6** | Observability | Real-time dashboards for insights ✅ |
 | **Phase 7** | Analytics Power | Sub-second queries over billions of rows |
 | **Phase 8** | Enrichment | Geo-contextual analytics capabilities |
 | **Future** | Global Scale | Multi-region deployment, disaster recovery |

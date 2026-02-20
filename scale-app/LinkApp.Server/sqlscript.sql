@@ -31,3 +31,7 @@ CREATE INDEX idx_analytics_code ON link_analytics(short_code);
 
 --For checking the Analystics entry 
 SELECT * FROM link_analytics ORDER BY clicked_at DESC LIMIT 10;
+
+-- Optimization: Composite Index for Analytics Queries (Phase 2)
+CREATE INDEX IF NOT EXISTS idx_analytics_code_date 
+ON link_analytics (short_code, clicked_at DESC);
