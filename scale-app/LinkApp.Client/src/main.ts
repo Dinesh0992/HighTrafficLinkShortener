@@ -1,5 +1,6 @@
 import './style.css'
 import type { LinkStats, TrendingLink } from './types';
+import { renderAnalyticsChart } from './chart';
 
 const API_BASE = 'http://localhost:5082/api';
 
@@ -58,6 +59,7 @@ async function loadTrending(): Promise<void> {
 }
 
 // --- SEARCH LOGIC ---
+/*
 async function getStats(code: string): Promise<void> {
     const statsContainer = document.getElementById('stats-display')!;
     try {
@@ -77,10 +79,37 @@ async function getStats(code: string): Promise<void> {
         alert('Code not found');
     }
 }
-
+*/
 document.getElementById('search-btn')?.addEventListener('click', () => {
     const code = (document.getElementById('search-input') as HTMLInputElement).value;
     if (code) getStats(code);
 });
 
 loadTrending();
+
+async function getStats(code: string): Promise<void> {
+    const statsContainer = document.getElementById('stats-display')!;
+    try {
+        const res = await fetch(`${API_BASE}/stats/${code}`);
+        if (!res.ok) throw new Error('Not found');
+        
+        const data: LinkStats = await res.json();
+        
+        // 1. Update text stats
+        document.getElementById('total-clicks')!.innerText = data.totalClicks.toString();
+        document.getElementById('unique-visitors')!.innerText = data.uniqueVisitors.toString();
+        document.getElementById('last-accessed')!.innerText = data.lastAccessed 
+            ? new Date(data.lastAccessed).toLocaleString() 
+            : 'Never';
+            
+        // 2. Render the Chart
+        if (data.clickHistory && data.clickHistory.length > 0) {
+            renderAnalyticsChart('analyticsChart', data.clickHistory);
+        }
+
+        statsContainer.classList.remove('hidden');
+    } catch (err) {
+        alert('Code not found or server error');
+        console.error(err);
+    }
+}

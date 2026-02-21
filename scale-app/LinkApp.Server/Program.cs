@@ -97,7 +97,7 @@ app.MapPost("/api/seed", async (NpgsqlDataSource dataSource) =>
     await using var writer = await conn.BeginBinaryImportAsync(
         "COPY urls (long_url, short_code) FROM STDIN (FORMAT BINARY)");
 
-    for (int i = 100001; i <= 10000000; i++)
+    for (int i = 200001; i <= 10000000; i++)
     {
         await writer.StartRowAsync();
         await writer.WriteAsync($"https://google.com/search?q={i}", NpgsqlTypes.NpgsqlDbType.Text);
