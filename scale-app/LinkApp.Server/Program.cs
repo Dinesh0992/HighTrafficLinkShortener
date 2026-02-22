@@ -1,3 +1,4 @@
+using ClickHouse.Client.ADO;
 using Microsoft.Extensions.Caching.Distributed;
 using Npgsql;
 using System.Threading.Channels;
@@ -8,13 +9,15 @@ var builder = WebApplication.CreateBuilder(args);
 // --- CONFIGURATION ---
 var connectionString = builder.Configuration.GetConnectionString("Postgres");
 var redisConnection = builder.Configuration.GetConnectionString("Redis");
+var clickHouseConnection = builder.Configuration.GetConnectionString("ClickHouse");
 
 
 // 1. Define Policy
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowVite", policy =>
-        policy.WithOrigins("http://localhost:5173")
+        policy.AllowAnyOrigin()
+       // WithOrigins("http://localhost:5173")
               .AllowAnyHeader()
               .AllowAnyMethod());
 });
@@ -24,7 +27,9 @@ builder.Services.AddCors(options =>
 // --- PHASE 2: DATABASE & POOLING (Singleton DataSource) ---
 builder.Services.AddNpgsqlDataSource(connectionString!);
 
-
+// --- PHASE 7: ANALYTICS (ClickHouse) ---
+var chBuilder = new ClickHouseConnectionStringBuilder(clickHouseConnection);
+builder.Services.AddSingleton(new ClickHouseConnection(chBuilder.ToString()));
 
 // --- PHASE 3: DISTRIBUTED CACHING (Redis) ---
 builder.Services.AddStackExchangeRedisCache(options =>

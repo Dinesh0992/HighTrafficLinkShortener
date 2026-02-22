@@ -1,93 +1,70 @@
+using System.Data;
 using System.Threading.Channels;
+using ClickHouse.Client.ADO;
+using ClickHouse.Client.Copy;
 using Npgsql;
 
 public class AnalyticsBackgroundWorker : BackgroundService
 {
     private readonly Channel<ClickData> _channel;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ClickHouseConnection _chConnection; // Add this
 
-    public AnalyticsBackgroundWorker(Channel<ClickData> channel, IServiceProvider serviceProvider)
+    public AnalyticsBackgroundWorker(
+        Channel<ClickData> channel,
+        IServiceProvider serviceProvider,
+        ClickHouseConnection chConnection) // Inject here
     {
         _channel = channel;
         _serviceProvider = serviceProvider;
+        _chConnection = chConnection;
     }
 
-    /**     * This background worker continuously reads click data from the channel and saves it to the database.
-         * By offloading this work to a background service, we avoid adding latency to the redirect endpoint.
-         One CLICK = ONE WRITE to Postgres, but it happens asynchronously after the redirect response is sent back to the user.
-        
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            // Read from the channel until the app shuts down
-            await foreach (var click in _channel.Reader.ReadAllAsync(stoppingToken))
-            {
-                using var scope = _serviceProvider.CreateScope();
-                var dataSource = scope.ServiceProvider.GetRequiredService<Npgsql.NpgsqlDataSource>();
-
-                try
-                {
-                    await using var cmd = dataSource.CreateCommand(
-                        "INSERT INTO link_analytics (short_code, ip_address, user_agent) VALUES (@c, @ip, @ua)");
-                    cmd.Parameters.AddWithValue("c", click.ShortCode);
-                    cmd.Parameters.AddWithValue("ip", click.IpAddress ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("ua", click.UserAgent ?? (object)DBNull.Value);
-                    
-                    await cmd.ExecuteNonQueryAsync(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error saving analytics: {ex.Message}");
-                }
-            }
-        }
-         */
-
-    // OPTIMIZATION: Instead of writing each click individually, we can batch them together for better performance.
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var batch = new List<ClickData>();
         var lastFlush = DateTime.UtcNow;
-        Console.WriteLine("[Analytics] Batch worker started. Batch size: 100, Flush interval: 5 seconds");
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // 1. Try to read from the channel
             while (_channel.Reader.TryRead(out var click))
             {
                 batch.Add(click);
-                if (batch.Count >= 100) break; // Stop reading if we hit batch size
+                if (batch.Count >= 100) break;
             }
 
-            // 2. If we have data AND (Batch is full OR 5 seconds passed)
             if (batch.Count > 0 && (batch.Count >= 100 || (DateTime.UtcNow - lastFlush).TotalSeconds >= 5))
             {
-                var batchSize = batch.Count;
-                await SaveBatchToDb(batch);
+                await SaveBatchToBothDbs(batch); // Updated method name
                 batch.Clear();
                 lastFlush = DateTime.UtcNow;
             }
 
-            // 3. Small pause to prevent CPU spinning if channel is empty
             await Task.Delay(500, stoppingToken);
         }
-        
-        // 4. On shutdown, flush any remaining clicks
+
         if (batch.Count > 0)
         {
-            Console.WriteLine($"[Analytics] Flushing {batch.Count} remaining clicks on shutdown...");
-            await SaveBatchToDb(batch);
+            await SaveBatchToBothDbs(batch);
         }
-        
-        Console.WriteLine("[Analytics] Batch worker stopped.");
     }
 
-    private async Task SaveBatchToDb(List<ClickData> clicks)
+    private async Task SaveBatchToBothDbs(List<ClickData> clicks)
+    {
+        // 1. Save to PostgreSQL (Your existing logic)
+        await SaveToPostgres(clicks);
+
+        // 2. Save to ClickHouse (The new Phase 7 logic)
+        await SaveToClickHouse(clicks);
+    }
+
+    private async Task SaveToPostgres(List<ClickData> clicks)
     {
         try
         {
+            Console.WriteLine($"[Postgres] Saving batch of {clicks.Count} clicks.");
             using var scope = _serviceProvider.CreateScope();
             var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
-
             await using var connection = await dataSource.OpenConnectionAsync();
             await using var batchCmd = connection.CreateBatch();
 
@@ -100,13 +77,45 @@ public class AnalyticsBackgroundWorker : BackgroundService
                 cmd.Parameters.AddWithValue("ua", click.UserAgent ?? (object)DBNull.Value);
                 batchCmd.BatchCommands.Add(cmd);
             }
-
             await batchCmd.ExecuteNonQueryAsync();
-            Console.WriteLine($"[Analytics] Successfully flushed {clicks.Count} clicks to database at {DateTime.UtcNow:O}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Analytics ERROR] Failed to flush {clicks.Count} clicks. Error: {ex.Message}. Exception: {ex}");
+            Console.WriteLine($"[Postgres ERROR] {ex.Message}");
         }
     }
+
+    private async Task SaveToClickHouse(List<ClickData> clicks)
+{
+    try
+    {
+        using var connection = new ClickHouseConnection(_chConnection.ConnectionString);
+        await connection.OpenAsync();
+
+        using var bulkCopy = new ClickHouseBulkCopy(connection)
+        {
+            DestinationTableName = "link_analytics_log",
+            BatchSize = 1000
+        };
+
+        // 1. FIX: You MUST initialize the column metadata
+        await bulkCopy.InitAsync(); 
+
+        // 2. FIX: Match the order and count of your ClickHouse table:
+        // Table: (short_code, ip_address, user_agent, clicked_at)
+        var rows = clicks.Select(e => new object[] {
+            e.ShortCode,               // short_code
+            e.IpAddress ?? "0.0.0.0",  // ip_address
+            e.UserAgent ?? "Unknown",  // user_agent
+            DateTime.UtcNow            // clicked_at
+        });
+
+        await bulkCopy.WriteToServerAsync(rows);
+        Console.WriteLine($"[ClickHouse] Successfully flushed {clicks.Count} rows.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ClickHouse ERROR] {ex.Message}");
+    }
+}
 }
