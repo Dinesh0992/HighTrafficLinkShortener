@@ -16,8 +16,8 @@ var clickHouseConnection = builder.Configuration.GetConnectionString("ClickHouse
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowVite", policy =>
-        policy.AllowAnyOrigin()
-       // WithOrigins("http://localhost:5173")
+        policy
+        .WithOrigins("http://localhost:5173")
               .AllowAnyHeader()
               .AllowAnyMethod());
 });
@@ -102,7 +102,7 @@ app.MapPost("/api/seed", async (NpgsqlDataSource dataSource) =>
     await using var writer = await conn.BeginBinaryImportAsync(
         "COPY urls (long_url, short_code) FROM STDIN (FORMAT BINARY)");
 
-    for (int i = 200001; i <= 10000000; i++)
+    for (int i = 1; i <= 100; i++)
     {
         await writer.StartRowAsync();
         await writer.WriteAsync($"https://google.com/search?q={i}", NpgsqlTypes.NpgsqlDbType.Text);
