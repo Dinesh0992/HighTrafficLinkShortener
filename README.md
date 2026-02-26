@@ -391,6 +391,71 @@ ORDER BY (short_code, clicked_at);
 
 ---
 
+## 🚀 Phase 8: RabbitMQ & ClickHouse Batch Consumer
+
+### The Event-Driven Architecture
+
+**Problem:** In-memory channels (Phase 5.1) work well on a single server but don't scale across multiple instances. When scaling out, each server has its own channel - analytics get fragmented and processing isn't coordinated.
+
+**Solution:** Implement **MassTransit with RabbitMQ** for distributed, reliable event delivery:
+- **Centralized Message Broker:** RabbitMQ coordinates analytics across all service instances
+- **Batch Consumer:** Consumes events in batches (100 events) for optimized ClickHouse ingestion
+- **Decoupled Architecture:** URL metadata stays in PostgreSQL, analytics served by ClickHouse
+
+### Architecture Diagram
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Web API    │     │  Web API    │     │  Web API    │
+│  (Instance1)│     │  (Instance2)│     │  (Instance3)│
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                    │                    │
+       │ Publish             │ Publish            │ Publish
+       ▼                    ▼                    ▼
+┌──────────────────────────────────────────────────────┐
+│                   RabbitMQ Queue                      │
+│              (ClickEvent Batch Queue)                │
+└─────────────────────────┬────────────────────────────┘
+                          │
+                          │ Consume Batch (100 events)
+                          ▼
+┌──────────────────────────────────────────────────────┐
+│              Batch Consumer Service                   │
+│         → Bulk Insert to ClickHouse                   │
+└──────────────────────────────────────────────────────┘
+```
+
+### Load Test Results
+
+```
+npx autocannon -c 20 -d 10 --expect 302 --expect 429 --renderStatusCodes http://localhost:5082/code1
+```
+
+| Metric | Result |
+| :--- | :--- |
+| **Average Throughput** | **17,399.5 Req/Sec** |
+| **Avg Latency** | **0.67 ms** |
+| **Total Requests** | **174,004 in 10.04s** |
+| **HTTP 302 (Redirect)** | **1,000** |
+| **HTTP 429 (Rate Limited)** | **173,004** |
+| **Data Processed** | **32 MB** |
+
+### Benefits
+
+| Aspect | Before (Phase 5.1) | After (Phase 8) | Improvement |
+| :--- | :--- | :--- | :--- |
+| **Scalability** | Single server only | Multi-instance via RabbitMQ | **Horizontal** |
+| **Reliability** | In-memory (data loss on crash) | Durable RabbitMQ messages | **Guaranteed delivery** |
+| **Coordination** | None (fragmented processing) | Centralized queue | **Ordered processing** |
+| **Storage** | PostgreSQL only | ClickHouse (OLAP) | **Billion-scale analytics** |
+
+### Next Steps (Phase 9)
+Now that the code is "Scale-Out Ready," we move to cloud/cluster deployment:
+- **HPA:** Configure Kubernetes to watch RabbitMQ Queue Length
+- **Dockerization:** Finalize Dockerfile for Batch Consumer vs. Web API
+
+---
+
 ## 🛠️ Tech Stack
 * **Runtime:** .NET 10 (Minimal APIs)
 * **Database:** PostgreSQL 16 (OLTP) + ClickHouse (OLAP)
@@ -518,10 +583,26 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 | **Phase 5.1** | Batch Insert (100 clicks) | **23,147 RPS** | 99% DB Round-trip Reduction |
 | **Phase 6** | Analytics Dashboard | **23,000+ RPS** | Real-time Stats API + UI + Chart Visualization |
 | **Phase 7** | ClickHouse Integration | **23,000+ RPS** | Dual-write to PostgreSQL + ClickHouse for OLAP |
+| **Phase 8** | RabbitMQ + Batch Consumer | **17,399 RPS** | MassTransit Event-Driven Analytics with ClickHouse |
 
 ---
 
 ## 📝 Recent Changes (Current Working Copy)
+
+### Phase 8: RabbitMQ & ClickHouse Batch Consumer (COMPLETED)
+- **Integrated MassTransit with RabbitMQ** for reliable event-driven analytics delivery
+- **Batch Consumer Implementation** - Consumes events in batches (100 events) for optimized ClickHouse ingestion
+- **Decoupled Architecture**: 
+  - URL redirect path remains fast (PostgreSQL + Redis)
+  - Analytics served by ClickHouse (OLAP) while URL metadata stays in Postgres (OLTP)
+- **Load Test Results** (Autocannon: `npx autocannon -c 20 -d 10 --expect 302 --expect 429`):
+  - **Average Throughput:** 17,399.5 Req/Sec
+  - **Avg Latency:** 0.67 ms
+  - **Total Requests:** 174,004 in 10.04s
+  - **HTTP 302:** 1,000 (Authorized redirects)
+  - **HTTP 429:** 173,004 (Rate limited)
+  - **Data Processed:** 32 MB
+- **System is now Scale-Out Ready** for cloud/cluster deployment
 
 ### Phase 7: ClickHouse Integration (COMPLETED)
 - **Added ClickHouse.Client v7.14.0** - .NET client for ClickHouse database
@@ -627,6 +708,7 @@ curl http://localhost:5082/api/stats/trending
 - [x] Phase 5.1: Batch Insert Optimization – 100-click batching with error handling ✅ **COMPLETED**
 - [x] Phase 6: Analytics Dashboard – Real-time stats API, caching, modern UI, and chart visualization ✅ **COMPLETED**
 - [x] Phase 7: ClickHouse Integration – Dual-write to PostgreSQL + ClickHouse for OLAP queries ✅ **COMPLETED**
+- [x] Phase 8: RabbitMQ + Batch Consumer – MassTransit event-driven analytics with ClickHouse ✅ **COMPLETED** (17,399 RPS)
 
 ### Next Phases: Enterprise-Scale Analytics
 
@@ -639,7 +721,17 @@ curl http://localhost:5082/api/stats/trending
       - **Data Pipeline:** Real-time replication from Postgres to ClickHouse using Kafka or Change Data Capture (CDC).
 - [ ] **Expected Benefit:** Query 1 billion click records in <1 second, enabling real-time dashboards.
 
-#### Phase 8: Geo-IP Mapping
+#### Phase 9: Kubernetes & Infrastructure Scaling (NEXT)
+- [ ] **HPA (Horizontal Pod Autoscaler):** Configure K8s to watch RabbitMQ Queue Length
+  - If queue gets too long (too many clicks), automatically spin up 5 or 10 more Consumer Pods
+  - Clear backlog dynamically based on traffic spikes
+- [ ] **Dockerization:** Finalize Dockerfile for Batch Consumer vs. Web API
+  - Separate containers for URL Shortener API and Analytics Consumer
+  - Multi-stage builds for optimized image size
+- [ ] **Service Mesh:** Consider Istio or Linkerd for traffic management
+- [ ] **Cloud Migration:** Deploy to AWS EKS / GCP GKE / Azure AKS
+
+#### Phase 10: Geo-IP Mapping
 - [ ] **Enrich analytics** by mapping click IP addresses to countries/cities in the background pipeline.
 - [ ] Use MaxMind GeoIP2 database or similar for fast IP geolocation lookups.
 - [ ] Store geographic data alongside click records for multi-dimensional analytics.
@@ -655,7 +747,9 @@ curl http://localhost:5082/api/stats/trending
 | **Phase 5-5.1** | Analytics at Scale | 23,000 RPS with full observability |
 | **Phase 6** | Observability | Real-time dashboards for insights ✅ |
 | **Phase 7** | Analytics Power | Sub-second queries over billions of rows ✅ |
-| **Phase 8** | Enrichment | Geo-contextual analytics capabilities |
+| **Phase 8** | Event-Driven Scale | MassTransit + RabbitMQ + ClickHouse Batch Consumer ✅ |
+| **Phase 9** | Cloud-Native | Kubernetes HPA & Docker scaling |
+| **Phase 10** | Enrichment | Geo-contextual analytics capabilities |
 | **Future** | Global Scale | Multi-region deployment, disaster recovery |
 
 ---

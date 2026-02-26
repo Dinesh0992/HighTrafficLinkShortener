@@ -3,6 +3,9 @@ using System.Threading.Channels;
 using ClickHouse.Client.ADO;
 using ClickHouse.Client.Copy;
 using Npgsql;
+/** * This is the "Phase 5" Background Worker that reads ClickData from the Channel and saves it to PostgreSQL.
+ * In "Phase 7", we will enhance this same worker to also save to ClickHouse.
+ IN PHASE 8, we will comment this worker registration in program.cs  and replace it with a RabbitMQ Consumer. */
 
 public class AnalyticsBackgroundWorker : BackgroundService
 {

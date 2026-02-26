@@ -1,4 +1,8 @@
 using ClickHouse.Client.ADO;
+using LinkApp.Server.Consumers;
+using LinkApp.Server.Events;
+using LinkApp.Server.Services;
+using MassTransit;
 using Microsoft.Extensions.Caching.Distributed;
 using Npgsql;
 using System.Threading.Channels;
@@ -74,16 +78,45 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
             factory: _ => new SlidingWindowRateLimiterOptions
             {
-                PermitLimit = 10,
+                PermitLimit = 1000, // Increased from 10 to 1000 fr rabbitmq autocannon load testing
                 Window = TimeSpan.FromSeconds(10),
                 SegmentsPerWindow = 5, // 10s / 5 segments = 2s per segment
                 QueueLimit = 0
             }));
 });
 
+/* COMMENTING --- PHASE 5: BACKGROUND WORKER (Channel for ClickData) ---
 builder.Services.AddSingleton(Channel.CreateUnbounded<ClickData>());
-builder.Services.AddHostedService<AnalyticsBackgroundWorker>();
+builder.Services.AddHostedService<AnalyticsBackgroundWorker>();*/
+
 builder.Services.AddScoped<StatsService>();
+
+// --- PHASE 8: ANALYTICS (ClickHouse) WITH rabbitmq ---
+builder.Services.AddSingleton<ClickHouseService>();
+
+// RabbitMQ + MassTransit Configuration
+builder.Services.AddMassTransit(x =>
+{
+    // Register our Batch Consumer
+    x.AddConsumer<LinkVisitedBatchConsumer>(cfg =>
+    {
+        cfg.Options<BatchOptions>(options => options
+            .SetMessageLimit(100) // For testing, trigger every 100 clicks
+            .SetTimeLimit(TimeSpan.FromSeconds(5))); // Or every 5 seconds
+    });
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        cfg.Host("localhost", "/", h => {
+            h.Username("admin");
+            h.Password("password123");
+        });
+        
+        // This automatically sets up the exchange and queue in RabbitMQ
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
 
 var app = builder.Build();
 // --- MIDDLEWARE --- CORS should be early to set headers before rate limiter can reject requests
@@ -112,7 +145,7 @@ app.MapPost("/api/seed", async (NpgsqlDataSource dataSource) =>
     await writer.CompleteAsync();
     return Results.Ok("10000000 links created via Binary COPY!");
 });
-
+/*
 app.MapGet("/{code}", async (
     string code,
     NpgsqlDataSource dataSource,
@@ -158,13 +191,59 @@ app.MapGet("/{code}", async (
 
     return Results.NotFound();
 }).RequireRateLimiting("sliding-by-ip");
+*/
+/* PHASE 8: ANALYTICS (ClickHouse) WITH rabbitmq ---
+ We replace the Channel with a RabbitMQ Publisher. 
+ The Background Worker is replaced with a MassTransit Consumer that listens to the LinkVisitedEvent and writes to ClickHouse.
+*/
+app.MapGet("/{code}", async (
+    string code,
+    NpgsqlDataSource dataSource,
+    IDistributedCache cache,
+    IPublishEndpoint publishEndpoint,
+    HttpContext context) =>
+{
+    // 1. Check Redis
+    var cachedUrl = await cache.GetStringAsync(code);
 
+    if (string.IsNullOrEmpty(cachedUrl))
+    {
+        // 2. Query Postgres (Table: urls, Column: long_url)
+        await using var cmd = dataSource.CreateCommand("SELECT long_url FROM urls WHERE short_code = @c");
+        cmd.Parameters.AddWithValue("c", code);
+        var dbResult = await cmd.ExecuteScalarAsync();
+
+        if (dbResult is string longUrl)
+        {
+            cachedUrl = longUrl;
+            await cache.SetStringAsync(code, longUrl, new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+            });
+        }
+    }
+
+    if (!string.IsNullOrEmpty(cachedUrl))
+    {
+        // 3. Publish to RabbitMQ (Phase 8 Analytics)
+        await publishEndpoint.Publish(new LinkVisitedEvent(
+           ShortCode: code,
+            IpAddress: context.Connection.RemoteIpAddress?.ToString(),
+            UserAgent: context.Request.Headers.UserAgent,
+            ClickedAt: DateTime.UtcNow));
+
+        return Results.Redirect(cachedUrl);
+    }
+
+    return Results.NotFound();
+}).RequireRateLimiting("sliding-by-ip"); // <--- CRITICAL FOR 1M USER SCALE
 // --- THE STATS ENDPOINT ---
 app.MapGet("/api/stats/{code}", async (string code, StatsService statsService) =>
 {
     var stats = await statsService.GetStatsAsync(code);
     return stats is not null ? Results.Ok(stats) : Results.NotFound();
 });
+
 
 
 app.Run();

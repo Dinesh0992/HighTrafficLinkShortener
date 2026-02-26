@@ -10,36 +10,29 @@ public class StatsService(NpgsqlDataSource dataSource, IDistributedCache cache, 
 
     public async Task<LinkStats?> GetStatsAsync(string code)
     {
-        // 1. Try Cache First
+        // 1. Try Cache First (Crucial for 1M user scale to prevent DB hammering)
         var cacheKey = $"stats:{code}";
         var cachedData = await cache.GetStringAsync(cacheKey);
         if (cachedData != null)
             return JsonSerializer.Deserialize<LinkStats>(cachedData);
 
-        // 2. Postgres: Get only the Totals (Metadata)
-        // We removed sqlHistory from here because ClickHouse handles it better
-        const string sqlStats = @"
-            SELECT 
-                COUNT(*) as total,
-                COUNT(DISTINCT ip_address) as unique_ips,
-                MAX(clicked_at) as last_click
-            FROM link_analytics WHERE short_code = @c";
-
+        // 2. Postgres: Just check if the link actually exists
+        // We don't query 'link_analytics' in Postgres anymore because we moved to ClickHouse
+        const string sqlCheck = "SELECT 1 FROM urls WHERE short_code = @c";
         await using var connection = await dataSource.OpenConnectionAsync();
-        await using var cmd = new NpgsqlCommand(sqlStats, connection);
-        cmd.Parameters.AddWithValue("c", code);
+        await using var checkCmd = new NpgsqlCommand(sqlCheck, connection);
+        checkCmd.Parameters.AddWithValue("c", code);
+        var exists = await checkCmd.ExecuteScalarAsync();
 
-        await using var reader = await cmd.ExecuteReaderAsync();
+        if (exists == null) return null;
 
-        if (!await reader.ReadAsync() || reader.GetInt64(0) == 0) return null;
-
-        var total = reader.GetInt64(0);
-        var unique = reader.GetInt64(1);
-        var last = reader.IsDBNull(2) ? null : (DateTime?)reader.GetDateTime(2);
-
-        // 3. ClickHouse: Get the 7-day History (Analytics)
-        // CALLING THE METHOD HERE:
+        // 3. ClickHouse: Get BOTH Totals and 7-day History
+        // This is much faster for 1 million+ records
         var history = await GetHistoryFromClickHouse(code);
+
+        // Calculate totals from the history or a separate aggregated query if needed
+        // For this simple case, we'll fetch the aggregated totals directly from ClickHouse
+        var (total, unique, last) = await GetTotalsFromClickHouse(code);
 
         var stats = new LinkStats(code, total, unique, last, history);
 
@@ -52,47 +45,74 @@ public class StatsService(NpgsqlDataSource dataSource, IDistributedCache cache, 
         return stats;
     }
 
+    private async Task<(long total, long unique, DateTime? last)> GetTotalsFromClickHouse(string code)
+    {
+        const string chSql = @"
+            SELECT 
+                count() as total, 
+                uniq(ip_address) as unique_ips, 
+                max(clicked_at) as last_click 
+            FROM analytics_db.link_analytics_log 
+            WHERE short_code = {c:String}";
+
+        try
+        {
+            using var conn = new ClickHouseConnection(_chConnectionString);
+            await conn.OpenAsync();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = chSql;
+            cmd.Parameters.Add(new ClickHouseDbParameter { ParameterName = "c", Value = code });
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                return (
+                    Convert.ToInt64(reader.GetValue(0)), // total (UInt64 -> long)
+                    Convert.ToInt64(reader.GetValue(1)), // unique (UInt64 -> long)
+                    reader.IsDBNull(2) ? null : (DateTime?)reader.GetDateTime(2)
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ClickHouse Totals Error] {ex.Message}");
+        }
+        return (0, 0, null);
+    }
+
     private async Task<List<DailyClickCount>> GetHistoryFromClickHouse(string code)
     {
         var history = new List<DailyClickCount>();
         const string chSql = @"
-        SELECT 
-            toDate(clicked_at) AS day, 
-            count() AS count 
-        FROM link_analytics_log 
-        WHERE short_code = {c:String} 
-          AND clicked_at >= now() - INTERVAL 7 DAY 
-        GROUP BY day 
-        ORDER BY day DESC";
+            SELECT 
+                toDate(clicked_at) AS day, 
+                count() AS count 
+            FROM analytics_db.link_analytics_log 
+            WHERE short_code = {c:String} 
+              AND clicked_at >= now() - INTERVAL 7 DAY 
+            GROUP BY day 
+            ORDER BY day DESC";
 
         try
         {
-            Console.WriteLine($"[ClickHouse] Connecting with: {_chConnectionString}");
             using var conn = new ClickHouseConnection(_chConnectionString);
             await conn.OpenAsync();
-
             using var cmd = conn.CreateCommand();
             cmd.CommandText = chSql;
-
-            // Use ClickHouseDbParameter for the specific client library requirements
-            cmd.Parameters.Add(new ClickHouseDbParameter
-            {
-                ParameterName = "c",
-                Value = code
-            });
+            cmd.Parameters.Add(new ClickHouseDbParameter { ParameterName = "c", Value = code });
 
             using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 history.Add(new DailyClickCount(
                     DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc),
-                    Convert.ToInt64(reader.GetValue(1))
+                    Convert.ToInt64(reader.GetValue(1)) // count (UInt64 -> long)
                 ));
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ClickHouse Stats Error] {ex.Message}");
+            Console.WriteLine($"[ClickHouse History Error] {ex.Message}");
         }
         return history;
     }
