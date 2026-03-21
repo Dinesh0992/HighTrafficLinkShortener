@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: link-server-deployment
+spec:
+  replicas: 1 # Start with 1; we will scale this to test your "1 million user" goal later
+  selector:
+    matchLabels:
+      app: link-server
+  template:
+    metadata:
+      labels:
+        app: link-server
+    spec:
+      containers:
+      - name: link-server
+        image: link-app-server:v26
+        imagePullPolicy: Never # Critical: Forces K8s to use your local build
+        ports:
+        - containerPort: 5082
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        envFrom:
+        - configMapRef:
+            name: link-app-config # Connects your code to Redis, Postgres, and RabbitMQ
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: link-server-service
+spec:
+  type: NodePort
+  selector:
+    app: link-server
+  ports:
+    - protocol: TCP
+      port: 80         # Internal Cluster Port
+      targetPort: 5082 # Port inside your .NET container
+      nodePort: 30082  # Use http://localhost:30082 for your client requests

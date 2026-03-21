@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: link-app-config
+data:
+  # REMOVE 'GSSAPI=false;' as it is causing the ArgumentException
+  ConnectionStrings__Postgres: "Host=postgres-service;Database=shortener_db;Username=postgres;Password=password123;Include Error Detail=true;"
+  
+  ConnectionStrings__ClickHouse: "Host=clickhouse-service;Protocol=http;Port=8123;Database=analytics_db;Username=admin;Password=password123;"
+  ConnectionStrings__RabbitMQ: "amqp://admin:password123@rabbitmq-service:5672"
+  ConnectionStrings__Redis: "redis-service:6379"

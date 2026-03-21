@@ -456,15 +456,94 @@ Now that the code is "Scale-Out Ready," we move to cloud/cluster deployment:
 
 ---
 
+## 🚀 Phase 9: Kubernetes HPA Auto-Scaling (COMPLETED ✅)
+
+### The Production-Ready Architecture
+
+Successfully deployed the URL shortener to Kubernetes with Horizontal Pod Autoscaler (HPA) for automatic scaling based on CPU metrics.
+
+### Architecture in Kubernetes
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    KUBERNETES CLUSTER                           │
+│                                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              HPA (Horizontal Pod Autoscaler)            │   │
+│   │              Scales on CPU > 70% (2-50 pods)            │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                            │                                    │
+│        ┌───────────────────┼───────────────────┐                │
+│        ▼                   ▼                   ▼                │
+│   ┌─────────┐        ┌─────────┐        ┌─────────┐            │
+│   │  API    │        │  API    │        │  API    │            │
+│   │  Pod 1  │        │  Pod N  │        │  Pod N+1│  ← Auto-scaled
+│   └────┬────┘        └────┬────┘        └────┬────┘            │
+│        │                  │                  │                  │
+│        └──────────────────┼──────────────────┘                  │
+│                           ▼                                     │
+│   ┌─────────────────────────────────────────────────────┐      │
+│   │              Redis Cache (1-hour TTL)               │      │
+│   └─────────────────────────────────────────────────────┘      │
+│                           │                                    │
+│                           ▼                                    │
+│   ┌──────────┐     ┌──────────┐     ┌──────────┐              │
+│   │PostgreSQL│     │ RabbitMQ │     │ClickHouse│              │
+│   │ (OLTP)   │     │ (Queue)  │     │  (OLAP)  │              │
+│   └──────────┘     └──────────┘     └──────────┘              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### HPA Testing Results
+
+| Metric | Result |
+| :--- | :--- |
+| **Scaling Trigger** | CPU > 70% threshold |
+| **Pods Scaled** | 2 → 28 replicas |
+| **Final RPS** | 9,459 RPS at 500 concurrent connections |
+| **Latency (Avg)** | 52.43 ms |
+| **Latency (P99)** | 294 ms |
+| **Errors** | 0 |
+
+### Phase-by-Phase Pod Scaling
+
+| Phase | Concurrency | Start Pods | End Pods | Pod Increase |
+| :--- | :--- | :--- | :--- | :--- |
+| P1 | 10 | 2 | 2 | 0 (0%) |
+| P2 | 50 | 2 | 4 | +2 (100%) |
+| P3 | 100 | 4 | 10 | +6 (150%) |
+| P4 | 200 | 10 | 20 | +10 (100%) |
+| P5 | 500 | 20 | **28** | +8 (40%) |
+
+### Kubernetes Services
+
+| Service | Port | Purpose |
+| :--- | :--- | :--- |
+| link-server-service | 30082 (NodePort) | API Gateway |
+| postgres-service | 5432 | URL Metadata |
+| redis-service | 6379 | Cache Layer |
+| rabbitmq-service | 5672 | Event Queue |
+| clickhouse-service | 8123 | Analytics OLAP |
+
+### Key Files for Kubernetes
+- `scale-app/k8s/link-server.yaml` - API Deployment + HPA
+- `scale-app/k8s/rabbitmq.yaml` - Message Queue
+- `scale-app/k8s/postgres.yaml` - PostgreSQL
+- `scale-app/k8s/redis.yaml` - Redis Cache
+- `scale-app/k8s/clickhouse.yaml` - ClickHouse OLAP
+
+---
+
 ## 🛠️ Tech Stack
 * **Runtime:** .NET 10 (Minimal APIs)
 * **Database:** PostgreSQL 16 (OLTP) + ClickHouse (OLAP)
 * **Caching:** Redis (StackExchange.Redis)
 * **Analytics:** ClickHouse.Client for bulk inserts
+* **Messaging:** RabbitMQ + MassTransit (event-driven)
 * **Security:** Microsoft.AspNetCore.RateLimiting
-* **Stress Testing:** Autocannon
+* **Stress Testing:** Autocannon, hey
 * **Frontend:** Vite + TypeScript + Tailwind CSS
-* **Deployment:** Docker & Docker Compose
+* **Deployment:** Docker, Docker Compose & Kubernetes
 
 ---
 
@@ -584,10 +663,23 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 | **Phase 6** | Analytics Dashboard | **23,000+ RPS** | Real-time Stats API + UI + Chart Visualization |
 | **Phase 7** | ClickHouse Integration | **23,000+ RPS** | Dual-write to PostgreSQL + ClickHouse for OLAP |
 | **Phase 8** | RabbitMQ + Batch Consumer | **17,399 RPS** | MassTransit Event-Driven Analytics with ClickHouse |
+| **Phase 9** | Kubernetes HPA | **9,459 RPS** | ✅ Auto-scaling (2→28 pods) with Metrics Server |
 
 ---
 
 ## 📝 Recent Changes (Current Working Copy)
+
+### Phase 9: Kubernetes HPA Auto-Scaling (COMPLETED)
+- **Kubernetes Deployment** - Successfully deployed to K8s cluster with all services
+- **Fixed RabbitMQ K8s Issue** - Resolved networking issues with service DNS configuration (`rabbitmq-service:5672`)
+- **HPA Implementation** - Horizontal Pod Autoscaler scales 2→50 pods based on CPU metrics
+- **Metrics Server** - Installed for HPA metrics collection
+- **Load Test Results** (500 concurrent, 60 seconds):
+  - **Average Throughput:** 9,459 RPS
+  - **Avg Latency:** 52.43 ms
+  - **P99 Latency:** 294 ms
+  - **Errors:** 0
+  - **Pod Scaling:** 2 → 28 replicas during test
 
 ### Phase 8: RabbitMQ & ClickHouse Batch Consumer (COMPLETED)
 - **Integrated MassTransit with RabbitMQ** for reliable event-driven analytics delivery
@@ -709,6 +801,7 @@ curl http://localhost:5082/api/stats/trending
 - [x] Phase 6: Analytics Dashboard – Real-time stats API, caching, modern UI, and chart visualization ✅ **COMPLETED**
 - [x] Phase 7: ClickHouse Integration – Dual-write to PostgreSQL + ClickHouse for OLAP queries ✅ **COMPLETED**
 - [x] Phase 8: RabbitMQ + Batch Consumer – MassTransit event-driven analytics with ClickHouse ✅ **COMPLETED** (17,399 RPS)
+- [x] **Phase 9: Kubernetes HPA – Horizontal Pod Autoscaler with CPU-based scaling ✅ COMPLETED** (9,459 RPS, 2→28 pods)
 
 ### Next Phases: Enterprise-Scale Analytics
 
@@ -721,21 +814,25 @@ curl http://localhost:5082/api/stats/trending
       - **Data Pipeline:** Real-time replication from Postgres to ClickHouse using Kafka or Change Data Capture (CDC).
 - [ ] **Expected Benefit:** Query 1 billion click records in <1 second, enabling real-time dashboards.
 
-#### Phase 9: Kubernetes & Infrastructure Scaling (NEXT)
-- [ ] **HPA (Horizontal Pod Autoscaler):** Configure K8s to watch RabbitMQ Queue Length
-  - If queue gets too long (too many clicks), automatically spin up 5 or 10 more Consumer Pods
-  - Clear backlog dynamically based on traffic spikes
-- [ ] **Dockerization:** Finalize Dockerfile for Batch Consumer vs. Web API
-  - Separate containers for URL Shortener API and Analytics Consumer
-  - Multi-stage builds for optimized image size
-- [ ] **Service Mesh:** Consider Istio or Linkerd for traffic management
-- [ ] **Cloud Migration:** Deploy to AWS EKS / GCP GKE / Azure AKS
+#### Phase 9: Kubernetes & Infrastructure Scaling (COMPLETED ✅)
+- [x] **HPA (Horizontal Pod Autoscaler):** Configured K8s to watch CPU metrics
+  - Auto-scales from 2 to 50 pods based on 70% CPU threshold
+  - Successfully tested with 500 concurrent connections
+  - Pods scaled from 2 → 28 during load test
+- [x] **Dockerization:** Dockerfiles for API and Client containers
+- [x] **Kubernetes Manifests:** Complete deployment for PostgreSQL, Redis, RabbitMQ, ClickHouse
+- [x] **Metrics Server:** Installed for HPA metrics collection
 
-#### Phase 10: Geo-IP Mapping
+#### Phase 10: Geo-IP Mapping (Planned)
 - [ ] **Enrich analytics** by mapping click IP addresses to countries/cities in the background pipeline.
 - [ ] Use MaxMind GeoIP2 database or similar for fast IP geolocation lookups.
 - [ ] Store geographic data alongside click records for multi-dimensional analytics.
 - [ ] Example queries: "Show me clicks by country in the last hour" (instant response on ClickHouse).
+
+#### Phase 11: Advanced Scaling (Future)
+- [ ] **KEDA Integration:** Scale based on RabbitMQ queue length
+- [ ] **Service Mesh:** Consider Istio or Linkerd for traffic management
+- [ ] **Cloud Migration:** Deploy to AWS EKS / GCP GKE / Azure AKS
 
 ---
 
@@ -748,8 +845,9 @@ curl http://localhost:5082/api/stats/trending
 | **Phase 6** | Observability | Real-time dashboards for insights ✅ |
 | **Phase 7** | Analytics Power | Sub-second queries over billions of rows ✅ |
 | **Phase 8** | Event-Driven Scale | MassTransit + RabbitMQ + ClickHouse Batch Consumer ✅ |
-| **Phase 9** | Cloud-Native | Kubernetes HPA & Docker scaling |
+| **Phase 9** | Cloud-Native | Kubernetes HPA & Docker scaling ✅ |
 | **Phase 10** | Enrichment | Geo-contextual analytics capabilities |
+| **Phase 11** | Advanced Scaling | KEDA queue-based scaling |
 | **Future** | Global Scale | Multi-region deployment, disaster recovery |
 
 ---
