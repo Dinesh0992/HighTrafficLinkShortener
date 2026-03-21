@@ -3,8 +3,11 @@
 [![Framework](https://img.shields.io/badge/.NET-10.0-blue.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
 [![Database](https://img.shields.io/badge/Database-PostgreSQL-336791.svg)](https://www.postgresql.org/)
 [![Cache](https://img.shields.io/badge/Cache-Redis-DC382D.svg)](https://redis.io/)
+[![Analytics](https://img.shields.io/badge/Analytics-ClickHouse-FFCC00.svg)](https://clickhouse.com/)
+[![Messaging](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600.svg)](https://www.rabbitmq.com/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-Scaling-326CE5.svg)](https://kubernetes.io/)
 
-A world-class, high-concurrency URL shortener engineered to handle massive traffic spikes. This project demonstrates advanced system design patterns including **Distributed Caching**, **Partitioned Rate Limiting**, and **Database Optimization** to achieve **25,000+ Requests Per Second** on standard hardware.
+A production-oriented URL shortener built to learn and demonstrate microservices patterns at scale. This project covers the journey from a simple endpoint to a scalable system with **Distributed Caching**, **Partitioned Rate Limiting**, **Event-Driven Analytics**, **Message Queuing**, and **Kubernetes Auto-Scaling** - achieving **25,000+ Requests Per Second** through incremental optimization phases.
 
 ---
 
