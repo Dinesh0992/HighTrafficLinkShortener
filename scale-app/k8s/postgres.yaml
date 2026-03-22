@@ -26,7 +26,7 @@ spec:
         - containerPort: 5432
         volumeMounts:
         - name: postgres-storage
-          mountPath: /var/lib/postgresql/data # Standard Postgres data path
+          mountPath: /var/lib/postgresql/data
       volumes:
       - name: postgres-storage
         hostPath:
@@ -41,5 +41,5 @@ spec:
   selector:
     app: postgres
   ports:
-    - port: 5432
-      targetPort: 5432
+  - port: 5432
+    targetPort: 5432

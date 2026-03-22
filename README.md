@@ -502,11 +502,58 @@ Successfully deployed the URL shortener to Kubernetes with Horizontal Pod Autosc
 | Metric | Result |
 | :--- | :--- |
 | **Scaling Trigger** | CPU > 70% threshold |
-| **Pods Scaled** | 2 → 28 replicas |
-| **Final RPS** | 9,459 RPS at 500 concurrent connections |
-| **Latency (Avg)** | 52.43 ms |
-| **Latency (P99)** | 294 ms |
+| **Pods Scaled** | 2 → 6 replicas |
+| **Final RPS** | 21,823 RPS at 500 concurrent connections |
+| **Latency (Avg)** | 233 ms |
+| **Latency (P99)** | 2,795 ms |
 | **Errors** | 0 |
+
+### Latest Load Test Results (Phase 9.1)
+
+**Test Configuration:**
+```bash
+autocannon -c 500 --expect 302 --expect 429 --renderStatusCodes -d 70 -p 10 http://localhost:30082/code1
+```
+
+**Results:**
+| Metric | Value |
+| :--- | :--- |
+| **Duration** | 70 seconds |
+| **Connections** | 500 |
+| **Pipelines** | 10 |
+| **Total Requests** | 1,511,795 |
+| **Requests/sec (Avg)** | 21,823 |
+| **Peak Throughput** | 26,895 RPS |
+| **Latency (Avg)** | 233 ms |
+| **Latency (P99)** | 1,296 ms |
+| **Data Transferred** | 276 MB |
+
+**Status Codes:**
+| Code | Count | Meaning |
+| :--- | :--- | :--- |
+| **HTTP 302** | 14,000 | Successful redirects |
+| **HTTP 429** | 1,491,795 | Rate limited (single IP test) |
+
+### Kubernetes Auto-Scaling Metrics
+
+**Pod Scaling During Load Test:**
+| Metric | Before Load | During Load |
+| :--- | :--- | :--- |
+| **Pod Count** | 2 | 6 |
+| **CPU Target** | 13% | 390% |
+
+**Individual Pod Resource Usage:**
+| Pod | CPU | Memory | Age |
+| :--- | :--- | :--- | :--- |
+| 9h5dp | 308m | 103Mi | 28m |
+| f4szx | 311m | 109Mi | 26m |
+| dlmhw | 104m | 55Mi | 55s |
+| gk64n | 184m | 57Mi | 55s |
+| hznsg | 143m | 54Mi | 55s |
+| z2s62 | 96m | 51Mi | 55s |
+
+**ClickHouse Analytics:**
+- Total visits recorded: **52,001**
 
 ### ⚠️ Understanding the RPS Numbers (Local vs Kubernetes)
 
@@ -570,8 +617,46 @@ System can handle this because pods scale automatically to distribute load
 | link-server-service | 30082 (NodePort) | API Gateway |
 | postgres-service | 5432 | URL Metadata |
 | redis-service | 6379 | Cache Layer |
-| rabbitmq-service | 5672 | Event Queue |
+| rabbitmq-service | 5672/15672 | Event Queue / Management UI |
 | clickhouse-service | 8123 | Analytics OLAP |
+
+### Kubernetes Dashboard
+
+The project includes a Kubernetes Dashboard for real-time monitoring of auto-scaling.
+
+#### Installation
+
+```bash
+# Deploy Kubernetes Dashboard
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+
+# Create admin user
+kubectl apply -f scale-app/LinkApp.Server/dashboard-admin.yaml
+
+# Get access token
+kubectl -n kubernetes-dashboard create token admin-user
+```
+
+#### Access Dashboard
+
+1. **Start proxy:**
+   ```bash
+   kubectl proxy
+   ```
+
+2. **Open in browser:**
+   ```
+   http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+   ```
+
+3. **Login:** Select "Token" and paste the token from the previous command
+
+#### Dashboard Features
+- **Workloads:** View all pods, deployments, replica sets
+- **HPA Monitoring:** Watch auto-scaling in real-time
+- **Resource Usage:** CPU/Memory graphs per pod
+- **Services:** View all service endpoints
+- **Logs:** Access pod logs directly
 
 ### Key Files for Kubernetes
 - `scale-app/k8s/link-server.yaml` - API Deployment + HPA
@@ -698,6 +783,66 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 
 ---
 
+## 🚀 Kubernetes Deployment
+
+### Complete Setup Guide
+
+**📋 Full step-by-step instructions: [scale-app/k8s/CHECKLIST.md](scale-app/k8s/CHECKLIST.md)**
+
+The CHECKLIST.md contains:
+- Fresh start cleanup commands
+- Complete build & deploy steps
+- Database table creation
+- HPA configuration details
+- Kubernetes Dashboard setup
+- Load test commands
+- Auto-scaling verification
+- Troubleshooting guide
+
+### Quick Start
+
+```bash
+# Build image
+cd scale-app
+docker build -t link-app-server:v26 -f LinkApp.Server/Dockerfile .
+
+# Deploy all
+cd scale-app/k8s
+kubectl apply -f redis.yaml
+kubectl apply -f postgres.yaml
+kubectl apply -f rabbitmq.yaml
+kubectl apply -f clickhouse.yaml
+kubectl apply -f link-app-config.yaml
+kubectl apply -f link-server.yaml
+kubectl apply -f hpa-api.yaml
+```
+
+### Access URLs
+
+| Service | URL | Credentials |
+| :--- | :--- | :--- |
+| **Link Server** | http://localhost:30082 | - |
+| **RabbitMQ** | http://localhost:15672 | admin / password123 |
+| **K8s Dashboard** | http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/ | Token |
+
+### Quick Test
+
+```bash
+# Health check
+curl http://localhost:30082/ping
+
+# Seed data
+curl -X POST http://localhost:30082/api/seed
+
+# Load test
+autocannon -c 500 --expect 302 --expect 429 --renderStatusCodes -d 70 -p 10 http://localhost:30082/code1
+
+# Watch scaling
+kubectl get pods -l app=link-server -w
+```
+
+---
+
 ## 📊 Performance Evolution
 
 | Phase | Strategy | Throughput | Key Achievement |
@@ -711,23 +856,33 @@ autocannon -c 10 -d 5 --expect 302 --expect 429 --renderStatusCodes http://local
 | **Phase 6** | Analytics Dashboard | **23,000+ RPS** | Real-time Stats API + UI + Chart Visualization |
 | **Phase 7** | ClickHouse Integration | **23,000+ RPS** | Dual-write to PostgreSQL + ClickHouse for OLAP |
 | **Phase 8** | RabbitMQ + Batch Consumer | **17,399 RPS** | MassTransit Event-Driven Analytics with ClickHouse |
-| **Phase 9** | Kubernetes HPA | **9,459 RPS** | ✅ Auto-scaling (2→28 pods) with Metrics Server |
+| **Phase 9** | Kubernetes HPA | **21,823 RPS** | ✅ Auto-scaling (2→6 pods) with Dashboard |
 
 ---
 
 ## 📝 Recent Changes (Current Working Copy)
+
+### Phase 9.1: Kubernetes HPA & Dashboard (COMPLETED)
+- **Kubernetes Dashboard** - Installed for real-time monitoring of auto-scaling
+- **Updated HPA Configuration** - Scale down stabilization window reduced to 60 seconds
+- **Fresh Cluster Setup** - Complete rebuild from scratch with auto-initialization
+- **Load Test Results** (500 concurrent, 70 seconds, 10 pipelines):
+  - **Average Throughput:** 21,823 RPS
+  - **Peak Throughput:** 26,895 RPS
+  - **Avg Latency:** 233 ms
+  - **P99 Latency:** 1,296 ms
+  - **Total Requests:** 1,511,795
+  - **HTTP 302:** 14,000 (Successful redirects)
+  - **HTTP 429:** 1,491,795 (Rate limited)
+  - **Pod Scaling:** 2 → 6 replicas during test
+  - **CPU Peak:** 390%
+  - **ClickHouse Analytics:** 52,001 visits recorded
 
 ### Phase 9: Kubernetes HPA Auto-Scaling (COMPLETED)
 - **Kubernetes Deployment** - Successfully deployed to K8s cluster with all services
 - **Fixed RabbitMQ K8s Issue** - Resolved networking issues with service DNS configuration (`rabbitmq-service:5672`)
 - **HPA Implementation** - Horizontal Pod Autoscaler scales 2→50 pods based on CPU metrics
 - **Metrics Server** - Installed for HPA metrics collection
-- **Load Test Results** (500 concurrent, 60 seconds):
-  - **Average Throughput:** 9,459 RPS
-  - **Avg Latency:** 52.43 ms
-  - **P99 Latency:** 294 ms
-  - **Errors:** 0
-  - **Pod Scaling:** 2 → 28 replicas during test
 
 ### Phase 8: RabbitMQ & ClickHouse Batch Consumer (COMPLETED)
 - **Integrated MassTransit with RabbitMQ** for reliable event-driven analytics delivery
@@ -849,7 +1004,8 @@ curl http://localhost:5082/api/stats/trending
 - [x] Phase 6: Analytics Dashboard – Real-time stats API, caching, modern UI, and chart visualization ✅ **COMPLETED**
 - [x] Phase 7: ClickHouse Integration – Dual-write to PostgreSQL + ClickHouse for OLAP queries ✅ **COMPLETED**
 - [x] Phase 8: RabbitMQ + Batch Consumer – MassTransit event-driven analytics with ClickHouse ✅ **COMPLETED** (17,399 RPS)
-- [x] **Phase 9: Kubernetes HPA – Horizontal Pod Autoscaler with CPU-based scaling ✅ COMPLETED** (9,459 RPS, 2→28 pods)
+- [x] **Phase 9: Kubernetes HPA – Horizontal Pod Autoscaler with CPU-based scaling ✅ COMPLETED** (21,823 RPS, 2→6 pods, 60s scale-down)
+- [x] **Phase 9.1: Kubernetes Dashboard – Real-time monitoring of auto-scaling ✅ COMPLETED**
 
 ### Next Phases: Enterprise-Scale Analytics
 
@@ -866,10 +1022,18 @@ curl http://localhost:5082/api/stats/trending
 - [x] **HPA (Horizontal Pod Autoscaler):** Configured K8s to watch CPU metrics
   - Auto-scales from 2 to 50 pods based on 70% CPU threshold
   - Successfully tested with 500 concurrent connections
-  - Pods scaled from 2 → 28 during load test
+  - Pods scaled from 2 → 6 during load test
+  - Scale-down stabilization window: 60 seconds
 - [x] **Dockerization:** Dockerfiles for API and Client containers
 - [x] **Kubernetes Manifests:** Complete deployment for PostgreSQL, Redis, RabbitMQ, ClickHouse
 - [x] **Metrics Server:** Installed for HPA metrics collection
+- [x] **Kubernetes Dashboard:** Real-time monitoring of pod scaling, CPU/memory usage
+
+#### Phase 9.1: Kubernetes Dashboard (COMPLETED ✅)
+- [x] **Kubernetes Dashboard:** Web UI for monitoring cluster resources
+- [x] **Admin User Setup:** Token-based authentication
+- [x] **Real-time Monitoring:** Watch HPA scaling during load tests
+- [x] **Resource Graphs:** CPU/Memory visualization per pod
 
 #### Phase 10: Geo-IP Mapping (Planned)
 - [ ] **Enrich analytics** by mapping click IP addresses to countries/cities in the background pipeline.
