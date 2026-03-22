@@ -7,7 +7,7 @@
 [![Messaging](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600.svg)](https://www.rabbitmq.com/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Scaling-326CE5.svg)](https://kubernetes.io/)
 
-A production-oriented URL shortener built to learn and demonstrate microservices patterns at scale. This project covers the journey from a simple endpoint to a scalable system with **Distributed Caching**, **Partitioned Rate Limiting**, **Event-Driven Analytics**, **Message Queuing**, and **Kubernetes Auto-Scaling** - achieving **25,000+ Requests Per Second** through incremental optimization phases.
+A production-oriented URL shortener built to learn and demonstrate microservices patterns at scale. This project covers the journey from a simple endpoint to a scalable system with **Distributed Caching**, **Partitioned Rate Limiting**, **Event-Driven Analytics**, **Message Queuing**, and **Kubernetes Auto-Scaling** - achieving **22,000+ Requests Per Second** through incremental optimization phases.
 
 ---
 
